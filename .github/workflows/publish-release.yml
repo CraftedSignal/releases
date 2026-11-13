@@ -1,0 +1,58 @@
+name: Approve Public Release
+run-name: Review public release ${{ github.event.client_payload.manifest.tag }}
+
+on:
+  repository_dispatch:
+    types: [platform-release-ready]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-release-${{ github.event.client_payload.manifest.tag }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: Validate approval request
+    if: github.repository == 'CraftedSignal/releases' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout trusted release policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate manifest and summarize approval request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/publish_release.py
+
+  # GitHub must approve this job before it receives its write token or runs code.
+  # The environment is managed in github-config and must name hazcod as reviewer.
+  publish:
+    name: Publish approved public release
+    needs: review
+    if: github.repository == 'CraftedSignal/releases' && github.ref == 'refs/heads/main'
+    environment:
+      name: public-release
+      url: https://github.com/CraftedSignal/releases/releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout trusted release policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Revalidate and publish only the approved draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/publish_release.py --publish
