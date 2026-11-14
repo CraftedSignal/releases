@@ -43,17 +43,39 @@ class WorkflowPolicyTest < Minitest::Test
     end
   end
 
-  def test_contents_write_is_only_granted_after_human_approval
+  def test_contents_and_package_write_are_only_granted_after_human_approval
     Dir[File.join(ROOT, 'workflows', '*.yml')].each do |path|
       flow = workflow(File.basename(path))
       assert_equal 'read', flow.dig('permissions', 'contents')
+      refute_equal 'write', flow.dig('permissions', 'packages')
       flow.fetch('jobs').each_value do |job|
-        next unless job.dig('permissions', 'contents') == 'write'
+        next unless %w[contents packages].any? { |permission| job.dig('permissions', permission) == 'write' }
         assert_equal 'public-release', job.dig('environment', 'name')
         assert_equal 'review', job.fetch('needs')
         refute job.key?('continue-on-error')
       end
     end
+  end
+
+  def test_ghcr_write_and_login_only_exist_inside_the_approved_job
+    flow = workflow('publish-release.yml')
+    refute flow.fetch('permissions').key?('packages')
+    review = flow.fetch('jobs').fetch('review')
+    refute_equal 'write', review.fetch('permissions')['packages']
+    publish = flow.fetch('jobs').fetch('publish')
+    assert_equal 'write', publish.dig('permissions', 'packages')
+    assert_operator publish.fetch('timeout-minutes'), :>=, 45
+    steps = publish.fetch('steps')
+    login = steps.find { |step| step.fetch('uses', '').start_with?('docker/login-action@') }
+    refute_nil login
+    assert_match(/\Adocker\/login-action@[0-9a-f]{40}\z/, login.fetch('uses'))
+    assert_equal 'ghcr.io', login.dig('with', 'registry')
+    assert_equal '${{ github.actor }}', login.dig('with', 'username')
+    assert_equal '${{ github.token }}', login.dig('with', 'password')
+    assert steps.any? { |step| step.fetch('run', '').include?('apt-get install') && step.fetch('run').include?('skopeo') }
+    refute review.fetch('steps').any? { |step| step.fetch('uses', '').start_with?('docker/login-action@') }
+    refute_match(/azure\/login|aws-actions\/configure-aws-credentials|google-github-actions\/auth|secrets\./,
+                 File.read(File.join(ROOT, 'workflows', 'publish-release.yml')))
   end
 
   def test_pull_requests_validate_scripts_and_workflows_without_write_credentials

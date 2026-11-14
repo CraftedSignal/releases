@@ -8,6 +8,7 @@ import tempfile
 
 from github_release_api import GitHub
 from release_assets import SHA, SHA256, asset_records, expected_names, positive_id, snapshot, verify_files
+from release_oci import publish_container
 
 KEYS = {'schema', 'source_repository', 'source_release_id', 'source_sha', 'release_id', 'tag',
         'title', 'body_sha256', 'prerelease', 'target_commitish', 'assets'}
@@ -60,7 +61,7 @@ def review(api, manifest):
     return 'ready for approval'
 
 
-def publish(api, manifest, directory, publish=False):
+def publish(api, manifest, directory, publish=False, *, image_publisher=publish_container):
     validate_manifest(manifest)
     verify_gate(api)
     path = f'/releases/{manifest["release_id"]}'
@@ -69,10 +70,16 @@ def publish(api, manifest, directory, publish=False):
     for asset in manifest['assets']:
         api.download(asset['id'], Path(directory) / asset['name'])
     verify_files(release, directory)
-    if publish and release['draft']:
-        # Check the gate before the final draft GET, minimizing the non-atomic
-        # GET/PATCH interval. GitHub offers no documented atomic draft finalize.
+    if publish:
+        # Both publication surfaces use the same human approval and verified bytes.
+        # Recheck before the registry write and after that potentially lengthy copy.
         verify_gate(api)
+        if verify_identity(api.get(path), manifest) != before:
+            raise ValueError('Release changed during validation')
+        image_publisher(Path(directory), manifest['tag'])
+        verify_gate(api)
+    # Keep the final release GET immediately before PATCH. GitHub offers no
+    # documented atomic draft finalize or transaction with the container registry.
     after = api.get(path)
     if verify_identity(after, manifest) != before:
         raise ValueError('Release changed during validation')

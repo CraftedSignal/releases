@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+from oci_test_support import oci_fixture
 import sys
 import tempfile
 import unittest
@@ -29,6 +30,9 @@ def fixture():
         ('darwin_arm64', 'tar.gz'), ('windows_amd64', 'zip'))]
     files = {name: b'binary archive: ' + name.encode() for name in names}
     files.update({name + '.sbom.json': b'{"spdxVersion":"SPDX-2.3","packages":[]}' for name in names})
+    files['craftedsignal_1.2.3_linux_multiarch.oci.tar'] = oci_fixture()[0]
+    for arch in ('amd64', 'arm64'):
+        files[f'craftedsignal_1.2.3_linux_{arch}.oci.sbom.json'] = json.dumps({'artifacts': [], 'source': {'type': 'image', 'metadata': {'os': 'linux', 'architecture': arch}}}).encode()
     files['checksums.txt'] = ''.join(f'{hashlib.sha256(data).hexdigest()}  {name}\n' for name, data in sorted(files.items())).encode()
     release = {'id': 10, 'tag_name': TAG, 'name': TAG, 'body': '## Changes\n\nA reviewed feature.\n',
                'prerelease': False, 'draft': False, 'published_at': '2026-11-13T00:00:00Z',
@@ -51,7 +55,15 @@ class ReleaseAssetsTest(unittest.TestCase):
             return module.verify_files(self.release, Path(directory))
 
     def test_complete_binary_sbom_and_checksum_set_passes(self):
-        self.assertEqual(9, len(self.validate()))
+        self.assertEqual(12, len(self.validate()))
+
+    def test_missing_container_archive_or_sbom_is_rejected(self):
+        for suffix in ('multiarch.oci.tar', 'amd64.oci.sbom.json', 'arm64.oci.sbom.json'):
+            with self.subTest(suffix=suffix):
+                self.release, self.files = fixture()
+                self.release['assets'] = [a for a in self.release['assets'] if not a['name'].endswith(suffix)]
+                with self.assertRaises(ValueError):
+                    self.validate()
 
     def test_no_empty_partial_or_extra_asset_set_is_accepted(self):
         for assets in ([], self.release['assets'][:-1], self.release['assets'] + [dict(self.release['assets'][0], name='../extra')]):

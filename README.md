@@ -4,13 +4,27 @@ Official binary releases and changelogs for the [CraftedSignal](https://crafteds
 
 ## Installation
 
-Download a binary archive from the [Releases](https://github.com/CraftedSignal/releases/releases) page. Each release includes Linux amd64/arm64, macOS arm64 and Windows amd64 archives, an SBOM for each archive, and `checksums.txt` containing their SHA256 hashes.
+Download an archive from the [Releases](https://github.com/CraftedSignal/releases/releases) page. Each release contains twelve files:
 
-Verify a downloaded archive and its SBOM against `checksums.txt` before installing. Container images are distributed separately through CraftedSignal's Artifact Registry; this repository does not publish a public GHCR image.
+- Four binary archives: Linux amd64/arm64, macOS arm64, and Windows amd64.
+- Four matching binary-archive SBOMs.
+- `craftedsignal_VERSION_linux_multiarch.oci.tar`, containing both Linux container platforms and their original image index.
+- Two container SBOMs: `craftedsignal_VERSION_linux_amd64.oci.sbom.json` and `craftedsignal_VERSION_linux_arm64.oci.sbom.json`.
+- `checksums.txt`, containing SHA256 hashes for all eleven payload files.
+
+Verify each downloaded archive and SBOM against `checksums.txt` before installing. Binary archives include customer installation instructions and high-level changes in `README.md` and `CHANGELOG.md`. The same changes appear in the GitHub release notes; this repository README describes the release process rather than a particular version.
+
+Pull the approved container image with `docker pull ghcr.io/craftedsignal/releases:VERSION` (replace `VERSION` with the release number without its `v` prefix). Docker selects `linux/amd64` or `linux/arm64` automatically. For offline transfers, import the verified OCI archive into your registry:
+
+```sh
+skopeo copy --all oci-archive:craftedsignal_VERSION_linux_multiarch.oci.tar docker://YOUR_REGISTRY/craftedsignal:VERSION
+```
+
+Images are promoted from the scanned private build without rebuilding. Only immutable version tags are published; there is no `latest` alias that an older approval could move backwards.
 
 ## Release approval
 
-A successful private platform release automatically prepares a draft here, copying its existing binary archives, SBOMs, checksums and release notes without rebuilding them. Preparation verifies every GitHub SHA256 digest and the complete checksum manifest before automatically requesting approval.
+A push to platform `main` automatically evaluates semantic versioning. A qualifying release builds the binaries and images, scans both Linux container architectures, and prepares a draft here by copying the verified archives, SBOMs, checksums and release notes. Preparation verifies every GitHub SHA256 digest, the complete checksum manifest and the complete OCI image graph before automatically requesting approval.
 
 The [Approve Public Release workflow](https://github.com/CraftedSignal/releases/actions/workflows/publish-release.yml) summarizes the immutable request and pauses at the `public-release` environment. Only **hazcod** can approve publication. Admin bypass is disabled; self-review remains allowed for the sole maintainer. No one needs to manually start a promotion workflow.
 
@@ -20,7 +34,9 @@ To approve a release:
 2. Inspect the prepared draft on the [Releases page](https://github.com/CraftedSignal/releases/releases), including its notes and SBOMs. Drafts are visible only to authorized maintainers.
 3. Select **Review deployments** and approve `public-release`, or reject/cancel to leave that version unpublished.
 
-Only the approved job receives a Contents write token. It downloads all draft assets, rechecks their hashes and checksum coverage, and compares the exact title, notes, prerelease flag, release ID and asset IDs with the approved manifest immediately before publication. Detected changes or an incomplete draft stop publication. Private releases can continue while a public approval waits. Stable publication leaves latest-release selection to GitHub’s creation-date and semantic-version ordering so approvals may finish out of order; prereleases never become latest.
+Only the approved job receives Contents and Packages write permissions. It downloads all draft assets, rechecks their hashes, checksum coverage and OCI integrity, and promotes the exact multi-platform index to GHCR. It checks the pushed index digest and anonymous pull access, then compares the exact title, notes, prerelease flag, release ID and asset IDs with the approved manifest immediately before publishing the draft. Detected changes or an incomplete draft stop publication. Private releases can continue while a public approval waits. Stable publication leaves latest-release selection to GitHub’s creation-date and semantic-version ordering so approvals may finish out of order; prereleases never become latest.
+
+GHCR setup is one-time: GitHub creates new container packages private, so the `releases` package must be made public in its package settings. Its linked repository must be `CraftedSignal/releases` and this workflow must have write access. The publisher leaves the draft unpublished with a clear error until anonymous access works. Normal releases require only the approval above; no cloud credentials or manually started promotion are needed.
 
 Retries preserve the same draft and do not overwrite assets or notes. A retry of a completed, matching publication makes no changes. A rejected/canceled run leaves its draft unpublished; re-running preparation requests a fresh approval. If a draft was edited, resolve the mismatch against the private source or prepare a new private version before requesting approval again.
 
@@ -42,4 +58,4 @@ The asset contract and GitHub API helper are shared verbatim with platform. The 
 
 ## License
 
-CraftedSignal is commercial software. See [craftedsignal.com](https://craftedsignal.com) for licensing details.
+The `LICENSE` included in each downloaded binary archive contains that version's platform terms. Third-party components retain their own licenses and are identified in the SBOMs. See [craftedsignal.com](https://craftedsignal.com) for licensing enquiries.
