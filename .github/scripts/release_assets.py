@@ -1,5 +1,6 @@
 """Fail-closed release contract. Keep identical in platform and releases repositories."""
 import hashlib
+import json
 from pathlib import Path
 import re
 
@@ -21,7 +22,9 @@ def expected_names(tag):
     archives = {f'craftedsignal_{version}_{target}.{extension}' for target, extension in (
         ('linux_amd64', 'tar.gz'), ('linux_arm64', 'tar.gz'),
         ('darwin_arm64', 'tar.gz'), ('windows_amd64', 'zip'))}
-    return archives | {name + '.sbom.json' for name in archives} | {'checksums.txt'}
+    containers = {f'craftedsignal_{version}_linux_multiarch.oci.tar'} | {
+        f'craftedsignal_{version}_linux_{arch}.oci.sbom.json' for arch in ('amd64', 'arm64')}
+    return archives | {name + '.sbom.json' for name in archives} | containers | {'checksums.txt'}
 
 
 def asset_records(release, partial=False):
@@ -43,7 +46,7 @@ def asset_records(release, partial=False):
             raise ValueError('Missing digest or unfinished release asset upload')
         records[name] = {'name': name, 'id': identifier, 'size': positive_id(asset.get('size')), 'digest': digest}
     if not partial and set(records) != expected:
-        raise ValueError('Incomplete release asset set: require four binaries, four SBOMs and checksums.txt')
+        raise ValueError('Incomplete release asset set: require four binaries, six SBOMs, the multi-platform OCI archive and checksums.txt')
     return [records[name] for name in sorted(records)]
 
 
@@ -80,6 +83,7 @@ def verify_files(release, directory):
     expected = {r['name']: r['digest'] for r in records if r['name'] != 'checksums.txt'}
     if checksums != expected:
         raise ValueError('checksum entries must match every binary and SBOM digest exactly')
+    verify_container_files(release['tag_name'], directory)
     return records
 
 
@@ -93,3 +97,21 @@ def snapshot(release, partial=False):
             'body_sha256': body_digest(release.get('body')), 'prerelease': release['prerelease'],
             'target_commitish': release.get('target_commitish'), 'draft': release['draft'],
             'published_at': release.get('published_at'), 'assets': asset_records(release, partial=partial)}
+
+
+def verify_container_files(tag, directory, expected_digest=None):
+    from release_oci import verify_oci_archive
+    expected_names(tag)
+    version = tag[1:]
+    digest = verify_oci_archive(Path(directory) / f'craftedsignal_{version}_linux_multiarch.oci.tar', expected_digest=expected_digest)
+    for arch in ('amd64', 'arm64'):
+        path = Path(directory) / f'craftedsignal_{version}_linux_{arch}.oci.sbom.json'
+        try:
+            sbom = json.loads(path.read_text())
+            target = sbom['source']['metadata']
+            if (sbom['source']['type'] != 'image' or target['os'] != 'linux' or
+                    target['architecture'] != arch or not isinstance(sbom['artifacts'], list)):
+                raise ValueError('Container SBOM platform does not match its release filename')
+        except (KeyError, TypeError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValueError('Invalid container SBOM: ' + path.name) from error
+    return digest

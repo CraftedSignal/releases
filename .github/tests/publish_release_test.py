@@ -7,6 +7,7 @@ from release_assets_test import TAG, SHA, fixture, load
 
 
 from release_test_support import FakeGitHub
+from oci_test_support import RegistryBoundary
 
 def approved_manifest(release):
     assets = load('release_assets')
@@ -21,19 +22,31 @@ class PublishReleaseTest(unittest.TestCase):
     def setUp(self):
         self.api = FakeGitHub()
         self.api.release.update(draft=True, published_at=None)
+        self.registry = RegistryBoundary()
+        self.published_images = []
+        self.after_image_publish = None
+
+    def publish_image(self, directory, tag):
+        self.api.calls.append(('PUBLISH_CONTAINER', tag))
+        digest = load('release_oci').publish_container(directory, tag, run=self.registry)
+        self.published_images.append(digest)
+        if self.after_image_publish:
+            self.after_image_publish()
+        return digest
 
     def publish(self, manifest=None, publish=True):
         module = load('publish_release')
         if manifest is None:
             manifest = approved_manifest(self.api.release)
         with tempfile.TemporaryDirectory() as directory:
-            return module.publish(self.api, manifest, Path(directory), publish=publish)
+            return module.publish(self.api, manifest, Path(directory), publish=publish, image_publisher=self.publish_image)
 
     def test_approved_exact_draft_is_published_without_changing_notes_or_assets(self):
         result = self.publish()
         self.assertEqual('published', result)
         self.assertEqual([('PATCH', '/releases/10', {'draft': False, 'make_latest': 'legacy'})], self.api.mutations())
-        self.assertEqual(9, sum(c[0] == 'DOWNLOAD' for c in self.api.calls))
+        self.assertEqual(12, sum(c[0] == 'DOWNLOAD' for c in self.api.calls))
+        self.assertEqual(1, len(self.published_images))
 
     def test_preapproval_review_needs_no_draft_or_asset_access(self):
         module = load('publish_release')
@@ -46,9 +59,26 @@ class PublishReleaseTest(unittest.TestCase):
         index = next(i for i, call in enumerate(self.api.calls) if call[0] == 'PATCH')
         self.assertEqual(('GET', '/releases/10'), self.api.calls[index - 1])
 
+    def test_verified_container_is_published_before_the_final_draft_identity_check(self):
+        self.publish()
+        index = next(i for i, call in enumerate(self.api.calls) if call[0] == 'PUBLISH_CONTAINER')
+        self.assertTrue(all(call[0] != 'DOWNLOAD' for call in self.api.calls[index + 1:]))
+        self.assertEqual([('GET', '/environments/public-release'), ('GET', '/releases/10'),
+                          ('PATCH', '/releases/10', {'draft': False, 'make_latest': 'legacy'})],
+                         self.api.calls[index + 1:])
+
+    def test_container_copy_failure_keeps_the_github_release_draft(self):
+        self.registry.changed_copy = True
+        with self.assertRaisesRegex(ValueError, 'digest'):
+            self.publish()
+        self.assertTrue(self.api.release['draft'])
+        self.assertEqual([], self.api.mutations())
+
     def test_review_mode_performs_validation_without_writing(self):
         self.assertEqual('ready', self.publish(publish=False))
         self.assertEqual([], self.api.mutations())
+        self.assertEqual([], self.published_images)
+        self.assertFalse(any(call[0] == 'PUBLISH_CONTAINER' for call in self.api.calls))
 
     def test_mutated_notes_identity_asset_id_or_bytes_never_publish(self):
         for change in ('body', 'name', 'tag_name', 'prerelease', 'target_commitish', 'id', 'asset_id', 'asset_bytes'):
@@ -64,6 +94,8 @@ class PublishReleaseTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.publish(manifest)
                 self.assertEqual([], self.api.mutations())
+                self.assertIsNone(self.registry.content)
+                self.assertFalse(any(call[0] == 'PUBLISH_CONTAINER' for call in self.api.calls))
 
     def test_unprotected_or_wrong_reviewer_environment_fails_closed(self):
         for change in ('missing_rules', 'admin_bypass', 'wrong_reviewer', 'extra_reviewer'):
@@ -80,6 +112,8 @@ class PublishReleaseTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'environment|reviewer'):
                     self.publish()
                 self.assertEqual([], self.api.mutations())
+                self.assertIsNone(self.registry.content)
+                self.assertFalse(any(call[0] == 'PUBLISH_CONTAINER' for call in self.api.calls))
 
     def test_revalidation_detects_draft_changes_during_download(self):
         manifest = approved_manifest(self.api.release)
@@ -90,6 +124,8 @@ class PublishReleaseTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'manifest|changed'):
             self.publish(manifest)
         self.assertEqual([], self.api.mutations())
+        self.assertIsNone(self.registry.content)
+        self.assertFalse(any(call[0] == 'PUBLISH_CONTAINER' for call in self.api.calls))
 
     def test_gate_weakened_during_validation_prevents_the_publish_write(self):
         get = self.api.get
@@ -104,6 +140,27 @@ class PublishReleaseTest(unittest.TestCase):
         self.api.get = change_gate
         with self.assertRaisesRegex(ValueError, 'environment'):
             self.publish()
+        self.assertEqual([], self.api.mutations())
+        self.assertEqual([], self.published_images)
+        self.assertIsNone(self.registry.content)
+        self.assertFalse(any(call[0] == 'PUBLISH_CONTAINER' for call in self.api.calls))
+
+    def test_gate_weakened_during_container_copy_keeps_release_draft(self):
+        def weaken_gate():
+            self.api.environment['protection_rules'] = []
+        self.after_image_publish = weaken_gate
+        with self.assertRaisesRegex(ValueError, 'environment'):
+            self.publish()
+        self.assertTrue(self.api.release['draft'])
+        self.assertEqual([], self.api.mutations())
+
+    def test_draft_changed_during_container_copy_is_not_published(self):
+        def change_draft():
+            self.api.release['body'] += 'late edit'
+        self.after_image_publish = change_draft
+        with self.assertRaisesRegex(ValueError, 'changed|manifest'):
+            self.publish()
+        self.assertTrue(self.api.release['draft'])
         self.assertEqual([], self.api.mutations())
 
     def test_concurrent_publication_during_validation_is_detected(self):
