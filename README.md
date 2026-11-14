@@ -1,61 +1,79 @@
-# CraftedSignal Releases
+# CraftedSignal
 
-Official binary releases and changelogs for the [CraftedSignal](https://craftedsignal.com) platform.
+Official downloads for the [CraftedSignal](https://craftedsignal.com) detection engineering platform, available for security teams and managed security service providers (MSSPs).
 
-## Installation
+[Download the latest release](https://github.com/CraftedSignal/releases/releases/latest) · [Browse versions and release notes](https://github.com/CraftedSignal/releases/releases)
 
-Download an archive from the [Releases](https://github.com/CraftedSignal/releases/releases) page. Each release contains twelve files:
+## Downloads
 
-- Four binary archives: Linux amd64/arm64, macOS arm64, and Windows amd64.
-- Four matching binary-archive SBOMs.
-- `craftedsignal_VERSION_linux_multiarch.oci.tar`, containing both Linux container platforms and their original image index.
-- Two container SBOMs: `craftedsignal_VERSION_linux_amd64.oci.sbom.json` and `craftedsignal_VERSION_linux_arm64.oci.sbom.json`.
-- `checksums.txt`, containing SHA256 hashes for all eleven payload files.
+Choose the archive for your operating system and processor. Replace `VERSION` in the examples with the release number, such as `1.2.3`.
 
-Verify each downloaded archive and SBOM against `checksums.txt` before installing. Binary archives include customer installation instructions and high-level changes in `README.md` and `CHANGELOG.md`. The same changes appear in the GitHub release notes; this repository README describes the release process rather than a particular version.
+| Operating system | Processor | Download |
+| --- | --- | --- |
+| Linux | x86-64 (amd64) | `craftedsignal_VERSION_linux_amd64.tar.gz` |
+| Linux | ARM64 | `craftedsignal_VERSION_linux_arm64.tar.gz` |
+| macOS | Apple Silicon (ARM64) | `craftedsignal_VERSION_darwin_arm64.tar.gz` |
+| Windows | x86-64 (amd64) | `craftedsignal_VERSION_windows_amd64.zip` |
 
-Pull the approved container image with `docker pull ghcr.io/craftedsignal/releases:VERSION` (replace `VERSION` with the release number without its `v` prefix). Docker selects `linux/amd64` or `linux/arm64` automatically. For offline transfers, import the verified OCI archive into your registry:
+Each binary archive includes the executable, installation instructions in `README.md`, the version's changes in `CHANGELOG.md`, and its `LICENSE`.
 
-```sh
-skopeo copy --all oci-archive:craftedsignal_VERSION_linux_multiarch.oci.tar docker://YOUR_REGISTRY/craftedsignal:VERSION
-```
+Extract the archive and follow the deployment instructions supplied with your subscription. Run `./craftedsignal --help` on Linux or macOS, or `.\craftedsignal.exe --help` on Windows, to view command-line options.
 
-Images are promoted from the scanned private build without rebuilding. Only immutable version tags are published; there is no `latest` alias that an older approval could move backwards.
+## Verify your download
 
-## Release approval
-
-A push to platform `main` automatically evaluates semantic versioning. A qualifying release builds the binaries and images, scans both Linux container architectures, and prepares a draft here by copying the verified archives, SBOMs, checksums and release notes. Preparation verifies every GitHub SHA256 digest, the complete checksum manifest and the complete OCI image graph before automatically requesting approval.
-
-The [Approve Public Release workflow](https://github.com/CraftedSignal/releases/actions/workflows/publish-release.yml) summarizes the immutable request and pauses at the `public-release` environment. Only **hazcod** can approve publication. Admin bypass is disabled; self-review remains allowed for the sole maintainer. No one needs to manually start a promotion workflow.
-
-To approve a release:
-
-1. Open the pending workflow and read its validation summary, including the source commit, notes SHA256 and every asset ID/digest.
-2. Inspect the prepared draft on the [Releases page](https://github.com/CraftedSignal/releases/releases), including its notes and SBOMs. Drafts are visible only to authorized maintainers.
-3. Select **Review deployments** and approve `public-release`, or reject/cancel to leave that version unpublished.
-
-Only the approved job receives Contents and Packages write permissions. It downloads all draft assets, rechecks their hashes, checksum coverage and OCI integrity, and promotes the exact multi-platform index to GHCR. It checks the pushed index digest and anonymous pull access, then compares the exact title, notes, prerelease flag, release ID and asset IDs with the approved manifest immediately before publishing the draft. Detected changes or an incomplete draft stop publication. Private releases can continue while a public approval waits. Stable publication leaves latest-release selection to GitHub’s creation-date and semantic-version ordering so approvals may finish out of order; prereleases never become latest.
-
-GHCR setup is one-time: GitHub creates new container packages private, so the `releases` package must be made public in its package settings. Its linked repository must be `CraftedSignal/releases` and this workflow must have write access. The publisher leaves the draft unpublished with a clear error until anonymous access works. Normal releases require only the approval above; no cloud credentials or manually started promotion are needed.
-
-Retries preserve the same draft and do not overwrite assets or notes. A retry of a completed, matching publication makes no changes. A rejected/canceled run leaves its draft unpublished; re-running preparation requests a fresh approval. If a draft was edited, resolve the mismatch against the private source or prepare a new private version before requesting approval again.
-
-The approval environment is managed in `CraftedSignal/github-config` and restricts deployment to protected branches. The workflow also requires `main` and verifies that the live environment still requires hazcod with admin bypass disabled. No private repository credential is stored here. Administrators can still manage releases directly in GitHub; these controls govern automated publication.
-
-GitHub's draft publish API has no documented atomic compare-and-publish operation. Do not edit a draft during publication: the final identity check occurs immediately before the publish request, and an edit in that short interval can only be detected afterward. Repository writers remain trusted. If workflow files on `main` change while a pinned draft waits, GitHub can reject publication with the restricted token; prepare a fresh private version/draft and approve the new request instead of broadening token permissions.
-
-## Validation
-
-Pull requests run the offline release tests, approval workflow policy checks and actionlint. To run them locally:
+Download `checksums.txt` and verify the SHA256 hash before extracting a binary archive or importing a container image. On Linux, verify the downloaded files from the same directory:
 
 ```sh
-python3 -m unittest discover -s .github/tests -p '*_test.py'
-ruby .github/tests/workflow_policy_test.rb
-actionlint
+sha256sum --check --ignore-missing checksums.txt
 ```
 
-The asset contract and GitHub API helper are shared verbatim with platform. The tests use synthetic files and a simulated GitHub API, never real publication.
+On macOS:
 
-## License
+```sh
+shasum -a 256 craftedsignal_VERSION_darwin_arm64.tar.gz
+```
 
-The `LICENSE` included in each downloaded binary archive contains that version's platform terms. Third-party components retain their own licenses and are identified in the SBOMs. See [craftedsignal.com](https://craftedsignal.com) for licensing enquiries.
+On Windows, use PowerShell:
+
+```powershell
+Get-FileHash .\craftedsignal_VERSION_windows_amd64.zip -Algorithm SHA256
+```
+
+Compare the result with the matching filename in `checksums.txt`. Continue only when the hashes match.
+
+## Container images
+
+Images support both `linux/amd64` and `linux/arm64`. Pull a specific version; Docker selects the correct platform automatically:
+
+```sh
+docker pull ghcr.io/craftedsignal/releases:VERSION
+```
+
+Use an explicit version tag when deploying. Follow your deployment guide for configuration, persistent storage and license setup.
+
+For offline or private-registry installations, download `craftedsignal_VERSION_linux_multiarch.oci.tar`, verify its checksum, and copy both architectures into your own registry with Skopeo:
+
+```sh
+skopeo copy --all --preserve-digests oci-archive:craftedsignal_VERSION_linux_multiarch.oci.tar docker://YOUR_REGISTRY/craftedsignal:VERSION
+```
+
+## Software inventories
+
+Each release includes a JSON software bill of materials (SBOM) for every binary archive and each Linux container platform:
+
+- Binary archives: the archive filename followed by `.sbom.json`.
+- Container images: `craftedsignal_VERSION_linux_amd64.oci.sbom.json` and `craftedsignal_VERSION_linux_arm64.oci.sbom.json`.
+
+Use these inventories to review included components and their reported licenses. Their SHA256 hashes are included in `checksums.txt`.
+
+## What's new
+
+Read the [release notes](https://github.com/CraftedSignal/releases/releases) for high-level features, fixes, performance improvements and breaking changes. The downloaded `README.md` and `CHANGELOG.md` include the changes for that version.
+
+## Licensing and support
+
+CraftedSignal is commercial software. An applicable CraftedSignal license or subscription is required; a public download does not grant a right to resell, redistribute or embed the product in another commercial offering.
+
+Licensed MSSPs may operate CraftedSignal for client security services and charge for those services. Resale, redistribution, embedding in another commercial product and white-labeling require a separate written agreement. Preserve CraftedSignal branding and identify client-facing access and substantive reports as `Powered by CraftedSignal (https://craftedsignal.com)`. Normal API and SIEM integrations remain permitted within authorized use.
+
+See the [commercial license](LICENSE). Contact [CraftedSignal](https://craftedsignal.com) for MSSP usage, deployment guidance, licensing and support. The license supplied with your version and your commercial agreement govern permitted use. Third-party components retain their own licenses.
